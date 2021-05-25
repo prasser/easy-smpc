@@ -17,6 +17,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
 
 /**
  * The Bus collecting and sending the messages
@@ -24,18 +28,26 @@ import java.util.Map;
  * @author Felix Wirth
  * @author Fabian Prasser
  */
-public abstract class Bus {
+public abstract class Bus<T> {
     
     /** Stores the subscriptions with  known participants*/    
-    private final Map<Scope, Map<Participant, List<MessageListener>>> subscriptions;
+    private final Map<Scope, Map<Participant, List<MessageListener>>> subscriptions;   
+    /** Error listener */    
+    private final List<ErrorListener> errorListener;
+    /** Executor service */
+    private final ExecutorService executor;
     
     /**
      * Creates a new instance
+     * 
+     * @param sizeThreadpool
      */
-    public Bus(){
+    public Bus(int sizeThreadpool) {
+        this.executor = Executors.newFixedThreadPool(sizeThreadpool != 0 ? sizeThreadpool : Defaults.SIZE_THREADPOOL);
         this.subscriptions = new HashMap<>();
+        this.errorListener = new ArrayList<>(); 
     }
-    
+
     /**
      * Returns whether potentially running backend services are alive
      * @return
@@ -69,16 +81,54 @@ public abstract class Bus {
         listenerForParticipant.add(messageListener);         
     }
     
+
     /**
-     * Allows to send a message to a participant
+     * Abstract method to send a message
      * 
      * @param message
      * @param scope
      * @param participant
+     * @return
+     * @throws Exception
+     */
+    public abstract T sendInternal(Message message, Scope scope, Participant participant) throws Exception;
+    
+    /**
+     * Allows to send a message to a participant
+     * In case of error retries infinitely - error handling must be done by using the returned FutureTask object
+     * 
+     * @param message
+     * @param scope
+     * @param participant
+     * @return 
      * @throws BusException
      */
-    public abstract void send(Message message, Scope scope, Participant participant) throws BusException;
-   
+    public FutureTask<T> send(Message message, Scope scope, Participant participant) throws BusException {
+        // Create future task 
+        FutureTask<T> task = new FutureTask<>(new Callable<T>() {
+            @Override
+            public T call() throws Exception {
+                // Init
+                boolean sent = false;
+                
+                // Retry until sent successful
+                while(!sent) {
+                    try {
+                        sendInternal(message, scope, participant);
+                        sent = true;
+                    } catch (BusException e) {
+                        // Ignore and repeat
+                    }
+                }
+                return null;
+            }
+        });
+        
+        // Start and return
+        executor.execute(task);
+        return task;
+    }
+    
     /**
      * Stops all backend services that might be running
      */
@@ -142,5 +192,35 @@ public abstract class Bus {
         
         // At least one is listener is registered for scope and participant tuple
         return true;     
+    }
+    
+    /**
+     * Subscribes in the case of an error
+     *  
+     * @param messageListener
+     */
+    public synchronized void receiveError(ErrorListener errorListener) {
+        if (errorListener != null) {
+            this.errorListener.add(errorListener);
+        }
+    }
+    
+    /**
+     * Sends error messages
+     *  
+     * @param messageListener
+     */
+    public synchronized void receiveErrorInternal(Exception exception) {
+        // TODO synchronize error methods over error list and message methods over subscription map? 
+        for(ErrorListener listener : this.errorListener) {
+            listener.receive(exception);
+        }
+    }
+
+    /**
+     * @return the executor
+     */
+    protected ExecutorService getExecutor() {
+        return executor;
     }
 }

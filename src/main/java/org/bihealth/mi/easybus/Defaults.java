@@ -14,15 +14,16 @@
 package org.bihealth.mi.easybus;
 
 /**
- * An interface allowing the receiving of a message
+ * Default values for EasyBus
  * 
  * @author Felix Wirth
- *
+ * @author Fabian Prasser
  */
-public interface MessageListener {
+public class Defaults {
     
-    /**
-     * Needs to be implemented in order to receive a message
-     */
-    public void receive(Message message);
+    /** Fetch size for messages with IMAP */
+    public static final int FETCH_SIZE_IMAP = 1048576;
+    /** Number of threads in thread pool */
+    public static final int SIZE_THREADPOOL = 2;
+
 }
